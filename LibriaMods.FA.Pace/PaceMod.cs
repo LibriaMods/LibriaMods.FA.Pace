@@ -1,0 +1,172 @@
+using System;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using LibriaMods.Unity.Shared;
+using UnityEngine;
+
+namespace LibriaMods.FA.Pace
+{
+    /// <summary>
+    /// Forever Ago: faster walking/running (+/-) and skipping spoken lines.
+    /// The player moves with root motion, so the player's animator is sped up only while moving.
+    /// Game types are reached by reflection: the project builds without the game installed.
+    /// Keyboard is read with GetAsyncKeyState (the game uses Rewired, Unity's input may be off).
+    /// </summary>
+    [LibriaMod("Forever Ago Pace", "0.1.0", Id = "LibriaMods.FA.Pace")]
+    [LibriaGame("Third Shift", "ForeverAgo")]
+    public class PaceMod : LibriaMod
+    {
+        const float Step = 0.1f;
+        const BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.FlattenHierarchy;
+
+        IConfigEntry<float> multiplier;
+        IConfigEntry<bool> speedOn;
+        IConfigEntry<KeyCode> keyUp, keyDown, keyToggle, keySkip;
+
+        Type controllerType;           // AlfredCharacterController (player movement)
+        PropertyInfo controllerAnimator;
+        Type dialogueManager;          // PixelCrushers.DialogueSystem.DialogueManager (static)
+        PropertyInfo dmActive, dmView;
+        MethodInfo viewContinueAll;
+
+        Component player;
+        Animator anim;
+        float lastSet = 1f, refind;
+        readonly bool[] down = new bool[256];
+
+        public override void OnLoad(IModContext context)
+        {
+            base.OnLoad(context);
+            multiplier = context.Config("Multiplier", 1.6f, "Walk/run speed multiplier while moving (1 = normal)");
+            speedOn    = context.Config("SpeedEnabled", true, "Extra speed on/off");
+            keyUp      = context.Config("SpeedUpKey", KeyCode.KeypadPlus, "Increase the multiplier by 0.1 (main-row = / + also work)");
+            keyDown    = context.Config("SpeedDownKey", KeyCode.KeypadMinus, "Decrease the multiplier by 0.1 (main-row - also works)");
+            keyToggle  = context.Config("ToggleKey", KeyCode.F8, "Extra speed on/off");
+            keySkip    = context.Config("SkipLineKey", KeyCode.Tab, "Skip the current spoken line");
+            context.SaveConfig();
+
+            var game = Find("Assembly-CSharp");
+            var first = Find("Assembly-CSharp-firstpass");
+            controllerType = game?.GetType("AlfredCharacterController");
+            controllerAnimator = controllerType?.GetProperty("animator", All);
+            dialogueManager = first?.GetType("PixelCrushers.DialogueSystem.DialogueManager");
+            dmActive = dialogueManager?.GetProperty("isConversationActive", All);
+            dmView = dialogueManager?.GetProperty("conversationView", All);
+            viewContinueAll = first?.GetType("PixelCrushers.DialogueSystem.ConversationView")?.GetMethod("OnConversationContinueAll", All, null, Type.EmptyTypes, null);
+
+            context.Log($"player controller={controllerType != null}, animator={controllerAnimator != null}, dialogues={viewContinueAll != null}");
+        }
+
+        public override void OnUpdate()
+        {
+            if (Pressed(Vk(keyUp.Value)) || Pressed(0xBB)) ChangeSpeed(+Step);      // 0xBB = '=' / '+'
+            if (Pressed(Vk(keyDown.Value)) || Pressed(0xBD)) ChangeSpeed(-Step);    // 0xBD = '-'
+            if (Pressed(Vk(keyToggle.Value)))
+            {
+                speedOn.Value = !speedOn.Value;
+                Context.SaveConfig();
+                Toast.Show(speedOn.Value ? $"Pace x{multiplier.Value:0.0}" : "Pace off");
+            }
+            if (Pressed(Vk(keySkip.Value))) SkipLine();
+            ApplySpeed();
+        }
+
+        public override void OnUnload()
+        {
+            if (anim != null && Mathf.Approximately(anim.speed, lastSet)) anim.speed = 1f;
+        }
+
+        void ChangeSpeed(float d)
+        {
+            multiplier.Value = Mathf.Clamp((float)Math.Round(multiplier.Value + d, 1), 0.5f, 4f);
+            speedOn.Value = true;
+            Context.SaveConfig();
+            Toast.Show($"Pace x{multiplier.Value:0.0}");
+        }
+
+        void ApplySpeed()
+        {
+            refind -= Time.unscaledDeltaTime;
+            if ((player == null || anim == null) && refind <= 0f && controllerType != null)
+            {
+                refind = 1f;
+                player = UnityEngine.Object.FindObjectOfType(controllerType) as Component;
+                anim = player != null ? (controllerAnimator?.GetValue(player, null) as Animator ?? player.GetComponentInChildren<Animator>()) : null;
+                lastSet = anim != null ? anim.speed : 1f;
+                if (anim != null) Context.Log("Player found: " + player.name);
+            }
+            if (anim == null || !player.gameObject.activeInHierarchy) return;
+
+            bool moving = false;
+            try { moving = anim.GetBool("IsMoving"); } catch { }
+            float target = speedOn.Value && moving ? multiplier.Value : 1f;
+
+            // Leave the animator alone if something else (a cutscene) changed its speed.
+            if (Mathf.Approximately(anim.speed, lastSet))
+            {
+                if (!Mathf.Approximately(anim.speed, target)) { anim.speed = target; lastSet = target; }
+            }
+            else if (Mathf.Approximately(target, 1f)) lastSet = anim.speed;
+        }
+
+        void SkipLine()
+        {
+            try
+            {
+                if (dmActive == null || !(bool)dmActive.GetValue(null, null)) return;
+                var view = dmView?.GetValue(null, null);
+                if (view == null) return;
+                viewContinueAll.Invoke(view, null);
+                Context.Log("Skipped line");
+            }
+            catch (Exception e) { Context.Warning("Skip failed: " + (e.InnerException ?? e).Message); }
+        }
+
+        // ------------------------------------------------------------------ input
+
+        [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vKey);
+        [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+        [DllImport("kernel32.dll")] static extern uint GetCurrentProcessId();
+        [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+
+        bool Pressed(int vk)
+        {
+            if (vk <= 0 || vk > 255) return false;
+            bool isDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
+            bool was = down[vk];
+            down[vk] = isDown;
+            if (!isDown || was) return false;
+            GetWindowThreadProcessId(GetForegroundWindow(), out uint pid);
+            return pid == GetCurrentProcessId();   // only when the game window has focus
+        }
+
+        /// <summary>Unity KeyCode → Windows virtual-key code (keyboard keys only).</summary>
+        static int Vk(KeyCode k)
+        {
+            if (k >= KeyCode.A && k <= KeyCode.Z) return 'A' + (k - KeyCode.A);
+            if (k >= KeyCode.Alpha0 && k <= KeyCode.Alpha9) return '0' + (k - KeyCode.Alpha0);
+            if (k >= KeyCode.Keypad0 && k <= KeyCode.Keypad9) return 0x60 + (k - KeyCode.Keypad0);
+            if (k >= KeyCode.F1 && k <= KeyCode.F15) return 0x70 + (k - KeyCode.F1);
+            switch (k)
+            {
+                case KeyCode.Backspace: return 0x08; case KeyCode.Tab: return 0x09; case KeyCode.Return: return 0x0D;
+                case KeyCode.Space: return 0x20; case KeyCode.Escape: return 0x1B; case KeyCode.Pause: return 0x13;
+                case KeyCode.PageUp: return 0x21; case KeyCode.PageDown: return 0x22; case KeyCode.End: return 0x23; case KeyCode.Home: return 0x24;
+                case KeyCode.LeftArrow: return 0x25; case KeyCode.UpArrow: return 0x26; case KeyCode.RightArrow: return 0x27; case KeyCode.DownArrow: return 0x28;
+                case KeyCode.Insert: return 0x2D; case KeyCode.Delete: return 0x2E;
+                case KeyCode.KeypadMultiply: return 0x6A; case KeyCode.KeypadPlus: return 0x6B; case KeyCode.KeypadMinus: return 0x6D;
+                case KeyCode.KeypadPeriod: return 0x6E; case KeyCode.KeypadDivide: return 0x6F; case KeyCode.KeypadEnter: return 0x0D;
+                case KeyCode.LeftShift: return 0xA0; case KeyCode.RightShift: return 0xA1; case KeyCode.LeftControl: return 0xA2; case KeyCode.RightControl: return 0xA3;
+                case KeyCode.LeftAlt: return 0xA4; case KeyCode.RightAlt: return 0xA5;
+                default: return 0;
+            }
+        }
+
+        static Assembly Find(string name)
+        {
+            foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+                if (a.GetName().Name == name) return a;
+            return null;
+        }
+    }
+}

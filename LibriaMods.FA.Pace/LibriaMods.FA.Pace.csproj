@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Forever Ago Pace: a LibriaMods mod (ILibriaMod), loaded and hot-reloaded by LibriaMods.Unity.Loader.
+       Needs the LibriaMods.Unity.Shared repo next to this one. -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <!-- Where Forever Ago is installed. Override ForeverAgoDir in ..\LibriaMods.user.props. -->
+    <ForeverAgoDir Condition="'$(ForeverAgoDir)' == ''">D:\Games\Forever Ago</ForeverAgoDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\LibriaMods.Unity.Shared\LibriaMods.Unity.Shared\LibriaMods.Unity.Shared.csproj" Private="false" />
+    <ProjectReference Include="..\..\LibriaMods.Unity.Shared\LibriaMods.Unity.Loader\LibriaMods.Unity.Loader.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- If the game is installed: mod → UserData\LibriaMods\Mods (hot-reloaded), loader → Mods, shared lib → UserLibs. -->
+  <Target Name="InstallToGame" AfterTargets="Build" Condition="Exists('$(ForeverAgoDir)\ForeverAgo.exe')">
+    <MSBuild Projects="..\..\LibriaMods.Unity.Shared\LibriaMods.Unity.Loader\LibriaMods.Unity.Loader.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="LoaderDll" />
+    </MSBuild>
+    <ItemGroup>
+      <SharedLib Include="@(ReferencePath)" Condition="'%(Filename)' == 'LibriaMods.Unity.Shared'" />
+    </ItemGroup>
+    <Copy SourceFiles="$(TargetPath);$(TargetDir)$(TargetName).pdb" DestinationFolder="$(ForeverAgoDir)\UserData\LibriaMods\Mods" />
+    <Copy SourceFiles="@(LoaderDll)" DestinationFolder="$(ForeverAgoDir)\Mods" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(SharedLib)" DestinationFolder="$(ForeverAgoDir)\UserLibs" SkipUnchangedFiles="true" />
+  </Target>
+</Project>
