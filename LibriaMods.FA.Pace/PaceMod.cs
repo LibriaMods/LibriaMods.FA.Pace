@@ -131,10 +131,31 @@ namespace LibriaMods.FA.Pace
                 if (dmActive == null || !(bool)dmActive.GetValue(null, null)) return;
                 var view = dmView?.GetValue(null, null);
                 if (view == null) return;
+                StopVoices();
                 viewContinueAll.Invoke(view, null);
                 Context.Log("Skipped line");
             }
             catch (Exception e) { Context.Warning("Skip failed: " + (e.InnerException ?? e).Message); }
+        }
+
+        // Voices are played by RogoDigital LipSync through FMOD; Stop(true) stops the audio too.
+        Type lipSyncType; PropertyInfo lsPlaying; MethodInfo lsStop; bool lsInit;
+        void StopVoices()
+        {
+            try
+            {
+                if (!lsInit)
+                {
+                    lsInit = true;
+                    lipSyncType = Find("Assembly-CSharp")?.GetType("RogoDigital.Lipsync.LipSync");
+                    lsPlaying = lipSyncType?.GetProperty("IsPlaying", All);
+                    lsStop = lipSyncType?.GetMethod("Stop", All, null, new[] { typeof(bool) }, null);
+                }
+                if (lipSyncType == null || lsStop == null) return;
+                foreach (var ls in UnityEngine.Object.FindObjectsOfType(lipSyncType))
+                    if ((bool)lsPlaying.GetValue(ls, null)) lsStop.Invoke(ls, new object[] { true });
+            }
+            catch (Exception e) { Context.Warning("StopVoices: " + (e.InnerException ?? e).Message); }
         }
 
         FieldInfo gsInstance, gsCutscene;
@@ -176,6 +197,7 @@ namespace LibriaMods.FA.Pace
                     }
                 }
                 if (next == double.MaxValue) continue;
+                StopVoices();           // the voice of the skipped line doesn't stop by itself when the timeline jumps
                 d.time = next + 0.02;   // just inside the clip, so it fires
                 d.Evaluate();
                 Context.Log($"Skipped line: {d.name} {now:0.00}s -> {next:0.00}s");
