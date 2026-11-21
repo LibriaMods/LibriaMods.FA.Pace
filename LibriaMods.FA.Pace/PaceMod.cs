@@ -127,21 +127,20 @@ namespace LibriaMods.FA.Pace
                 // would put it one line ahead of the timeline, and every later line would be cut short.
                 if (InCutscene()) { Context.Log("Cutscene: no next line to jump to, not skipping"); return; }
 
-                // Gameplay conversations: just continue the conversation.
-                if (dmActive == null || !(bool)dmActive.GetValue(null, null)) return;
-                var view = dmView?.GetValue(null, null);
-                if (view == null) return;
-                StopVoices();
-                viewContinueAll.Invoke(view, null);
-                Context.Log("Skipped line");
+                // Gameplay conversations: only stop the voice. The line's sequence waits for the voice, so it then
+                // ends by itself and still runs its own commands (end the examine animation, give control back...).
+                // Continuing the conversation directly would skip those and leave the player stuck.
+                int stopped = StopVoices();
+                Context.Log(stopped > 0 ? "Skipped line (voice stopped)" : "No voice playing, nothing to skip");
             }
             catch (Exception e) { Context.Warning("Skip failed: " + (e.InnerException ?? e).Message); }
         }
 
         // Voices are played by RogoDigital LipSync through FMOD; Stop(true) stops the audio too.
         Type lipSyncType; PropertyInfo lsPlaying; MethodInfo lsStop; bool lsInit;
-        void StopVoices()
+        int StopVoices()
         {
+            int n = 0;
             try
             {
                 if (!lsInit)
@@ -151,11 +150,12 @@ namespace LibriaMods.FA.Pace
                     lsPlaying = lipSyncType?.GetProperty("IsPlaying", All);
                     lsStop = lipSyncType?.GetMethod("Stop", All, null, new[] { typeof(bool) }, null);
                 }
-                if (lipSyncType == null || lsStop == null) return;
+                if (lipSyncType == null || lsStop == null) return 0;
                 foreach (var ls in UnityEngine.Object.FindObjectsOfType(lipSyncType))
-                    if ((bool)lsPlaying.GetValue(ls, null)) lsStop.Invoke(ls, new object[] { true });
+                    if ((bool)lsPlaying.GetValue(ls, null)) { lsStop.Invoke(ls, new object[] { true }); n++; }
             }
             catch (Exception e) { Context.Warning("StopVoices: " + (e.InnerException ?? e).Message); }
+            return n;
         }
 
         FieldInfo gsInstance, gsCutscene;
