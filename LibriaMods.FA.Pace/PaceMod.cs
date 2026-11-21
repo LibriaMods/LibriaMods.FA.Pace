@@ -123,6 +123,10 @@ namespace LibriaMods.FA.Pace
                 // jump the playing timeline to the next one, so animation, camera and voice move on too.
                 if (JumpToNextLine()) return;
 
+                // In a cutscene the timeline drives the conversation. Continuing the conversation on its own
+                // would put it one line ahead of the timeline, and every later line would be cut short.
+                if (InCutscene()) { Context.Log("Cutscene: no next line to jump to, not skipping"); return; }
+
                 // Gameplay conversations: just continue the conversation.
                 if (dmActive == null || !(bool)dmActive.GetValue(null, null)) return;
                 var view = dmView?.GetValue(null, null);
@@ -131,6 +135,23 @@ namespace LibriaMods.FA.Pace
                 Context.Log("Skipped line");
             }
             catch (Exception e) { Context.Warning("Skip failed: " + (e.InnerException ?? e).Message); }
+        }
+
+        FieldInfo gsInstance, gsCutscene;
+        bool InCutscene()
+        {
+            try
+            {
+                if (gsInstance == null)
+                {
+                    var gs = Find("Assembly-CSharp")?.GetType("GameState");
+                    gsInstance = gs?.GetField("Instance", All);
+                    gsCutscene = gs?.GetField("_isCutsceneActive", All);
+                }
+                var inst = gsInstance?.GetValue(null);
+                return inst != null && (bool)gsCutscene.GetValue(inst);
+            }
+            catch { return false; }
         }
 
         bool JumpToNextLine()
