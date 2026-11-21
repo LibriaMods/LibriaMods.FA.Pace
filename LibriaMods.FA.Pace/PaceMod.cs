@@ -119,6 +119,11 @@ namespace LibriaMods.FA.Pace
         {
             try
             {
+                // Cutscenes are Timelines with a "Continue Conversation" clip at every line change:
+                // jump the playing timeline to the next one, so animation, camera and voice move on too.
+                if (JumpToNextLine()) return;
+
+                // Gameplay conversations: just continue the conversation.
                 if (dmActive == null || !(bool)dmActive.GetValue(null, null)) return;
                 var view = dmView?.GetValue(null, null);
                 if (view == null) return;
@@ -126,6 +131,36 @@ namespace LibriaMods.FA.Pace
                 Context.Log("Skipped line");
             }
             catch (Exception e) { Context.Warning("Skip failed: " + (e.InnerException ?? e).Message); }
+        }
+
+        bool JumpToNextLine()
+        {
+            foreach (var d in UnityEngine.Object.FindObjectsOfType<UnityEngine.Playables.PlayableDirector>())
+            {
+                if (d == null || !d.isActiveAndEnabled || d.state != UnityEngine.Playables.PlayState.Playing || d.playableAsset == null) continue;
+                double now = d.time, next = double.MaxValue;
+                var timeline = d.playableAsset;
+                var tracks = timeline.GetType().GetMethod("GetOutputTracks", All, null, Type.EmptyTypes, null)?.Invoke(timeline, null) as System.Collections.IEnumerable;
+                if (tracks == null) continue;
+                foreach (var t in tracks)
+                {
+                    string tn = t.GetType().Name;
+                    if (tn != "ContinueConversationTrack" && tn != "ConversationTrack") continue;
+                    var clips = t.GetType().GetMethod("GetClips", All, null, Type.EmptyTypes, null)?.Invoke(t, null) as System.Collections.IEnumerable;
+                    if (clips == null) continue;
+                    foreach (var c in clips)
+                    {
+                        double start = (double)c.GetType().GetProperty("start", All).GetValue(c, null);
+                        if (start > now + 0.05 && start < next) next = start;
+                    }
+                }
+                if (next == double.MaxValue) continue;
+                d.time = next + 0.02;   // just inside the clip, so it fires
+                d.Evaluate();
+                Context.Log($"Skipped line: {d.name} {now:0.00}s -> {next:0.00}s");
+                return true;
+            }
+            return false;
         }
 
         // ------------------------------------------------------------------ input
