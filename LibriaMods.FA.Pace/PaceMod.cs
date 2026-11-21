@@ -22,6 +22,7 @@ namespace LibriaMods.FA.Pace
         IConfigEntry<float> multiplier;
         IConfigEntry<bool> speedOn;
         IConfigEntry<KeyCode> keyUp, keyDown, keyToggle, keySkip;
+        IConfigEntry<string> padSkip, padUp, padDown;
 
         Type controllerType;           // AlfredCharacterController (player movement)
         PropertyInfo controllerAnimator;
@@ -43,6 +44,9 @@ namespace LibriaMods.FA.Pace
             keyDown    = context.Config("SpeedDownKey", KeyCode.KeypadMinus, "Decrease the multiplier by 0.1 (main-row - also works)");
             keyToggle  = context.Config("ToggleKey", KeyCode.F8, "Extra speed on/off");
             keySkip    = context.Config("SkipLineKey", KeyCode.Tab, "Skip the current spoken line");
+            padSkip    = context.Config("PadSkipLine", "Circle, B", "Gamepad button(s) that skip a line, by Rewired name (comma separated). Empty = off");
+            padUp      = context.Config("PadSpeedUp", "", "Gamepad button(s) for +0.1, e.g. \"R3\" or \"Right Stick Button\". Empty = off");
+            padDown    = context.Config("PadSpeedDown", "", "Gamepad button(s) for -0.1. Empty = off");
             context.SaveConfig();
 
             var game = Find("Assembly-CSharp");
@@ -67,7 +71,9 @@ namespace LibriaMods.FA.Pace
                 Context.SaveConfig();
                 Toast.Show(speedOn.Value ? $"Pace x{multiplier.Value:0.0}" : "Pace off");
             }
-            if (Pressed(Vk(keySkip.Value))) SkipLine();
+            if (Pressed(Vk(keySkip.Value)) || Pad(padSkip.Value)) SkipLine();
+            if (Pad(padUp.Value)) ChangeSpeed(+Step);
+            if (Pad(padDown.Value)) ChangeSpeed(-Step);
             ApplySpeed();
         }
 
@@ -138,6 +144,54 @@ namespace LibriaMods.FA.Pace
             if (!isDown || was) return false;
             GetWindowThreadProcessId(GetForegroundWindow(), out uint pid);
             return pid == GetCurrentProcessId();   // only when the game window has focus
+        }
+
+        // ------------------------------------------------------------------ gamepad (Rewired, via reflection)
+
+        PropertyInfo rwReady, rwControllers;
+        bool rwInit, loggedPads;
+
+        /// <summary>True if any connected joystick's button with one of these names was just pressed.</summary>
+        bool Pad(string names)
+        {
+            if (string.IsNullOrEmpty(names)) return false;
+            try
+            {
+                if (!rwInit)
+                {
+                    rwInit = true;
+                    var reInput = Find("Rewired_Core")?.GetType("Rewired.ReInput");
+                    rwReady = reInput?.GetProperty("isReady", All);
+                    rwControllers = reInput?.GetProperty("controllers", All);
+                }
+                if (rwReady == null || !(bool)rwReady.GetValue(null, null)) return false;
+                var helper = rwControllers.GetValue(null, null);
+                var joysticks = helper.GetType().GetProperty("Joysticks", All).GetValue(helper, null) as System.Collections.IEnumerable;
+                if (joysticks == null) return false;
+                var wanted = names.Split(',');
+                foreach (var j in joysticks)
+                {
+                    var buttons = j.GetType().GetProperty("Buttons", All).GetValue(j, null) as System.Collections.IEnumerable;
+                    if (buttons == null) continue;
+                    foreach (var b in buttons)
+                    {
+                        string n = ButtonName(b);
+                        if (!loggedPads) Context.Log($"gamepad button: {n}");
+                        if (!(bool)b.GetType().GetProperty("justPressed", All).GetValue(b, null)) continue;
+                        foreach (var w in wanted)
+                            if (string.Equals(w.Trim(), n, StringComparison.OrdinalIgnoreCase)) return true;
+                    }
+                    loggedPads = true;
+                }
+            }
+            catch (Exception e) { if (!loggedPads) { loggedPads = true; Context.Warning("gamepad: " + e.Message); } }
+            return false;
+        }
+
+        static string ButtonName(object button)
+        {
+            var id = button.GetType().GetProperty("elementIdentifier", All)?.GetValue(button, null);
+            return id?.GetType().GetProperty("name", All)?.GetValue(id, null) as string ?? "";
         }
 
         /// <summary>Unity KeyCode → Windows virtual-key code (keyboard keys only).</summary>
