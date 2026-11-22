@@ -16,5 +16,15 @@ Settings: `UserData\LibriaMods\LibriaMods.FA.Pace.cfg` (keys are Unity `KeyCode`
 
 ## Build
 Clone next to [LibriaMods.Unity.Shared](https://github.com/LibriaMods/LibriaMods.Unity.Shared) and open
-`LibriaMods.FA.Pace.slnx`. With the game in `D:\Games\Forever Ago` (or `ForeverAgoDir` in `..\LibriaMods.user.props`)
+`LibriaMods.FA.Pace.slnx`. With the game in the default Steam folder (or `ForeverAgoDir` in `..\LibriaMods.user.props`)
 the build installs everything; the mod is hot-reloaded.
+
+For a game installed elsewhere, create `LibriaMods.user.props` in the folder that contains the repos:
+
+```xml
+<Project>
+  <PropertyGroup>
+    <ForeverAgoDir>D:\Games\Forever Ago</ForeverAgoDir>
+  </PropertyGroup>
+</Project>
+```

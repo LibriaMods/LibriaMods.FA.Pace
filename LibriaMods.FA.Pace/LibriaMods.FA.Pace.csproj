@@ -4,7 +4,7 @@
   <PropertyGroup>
     <Version>0.1.0</Version>
     <!-- Where Forever Ago is installed. Override ForeverAgoDir in ..\LibriaMods.user.props. -->
-    <ForeverAgoDir Condition="'$(ForeverAgoDir)' == ''">D:\Games\Forever Ago</ForeverAgoDir>
+    <ForeverAgoDir Condition="'$(ForeverAgoDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Forever Ago</ForeverAgoDir>
   </PropertyGroup>
 
   <ItemGroup>
